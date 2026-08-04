@@ -236,3 +236,73 @@ For SSF-compliant auto-discovery, host the following at `https://your.openbox.in
 ```
 
 If you host this, provide only `wellKnownUrl` during registration. If you skip it, provide `issuer` + `jwksUrl` directly (see [Step 2](#step-2-register-with-okta)).
+
+---
+
+## Step 2: Register with Okta
+
+Register OpenBox as a security events provider so Okta knows your issuer and can verify SETs signed with your key.
+
+### SSF-compliant (recommended)
+
+Use if you host `.well-known/ssf-configuration`:
+
+```bash
+curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
+  -H "Authorization: SSWS <your-api-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "OpenBox",
+    "type": "SecurityEventsProvider",
+    "settings": {
+      "wellKnownUrl": "https://your.openbox.instance/.well-known/ssf-configuration"
+    }
+  }'
+```
+
+### Non-SSF-compliant
+
+Use if you're hosting JWKS directly without a well-known config:
+
+```bash
+curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
+  -H "Authorization: SSWS <your-api-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "OpenBox",
+    "type": "SecurityEventsProvider",
+    "settings": {
+      "issuer": "https://your.openbox.instance/",
+      "jwksUrl": "https://your.openbox.instance/.well-known/jwks.json"
+    }
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "sse0a4tsrkqfyFxBJ0g7",
+  "name": "OpenBox",
+  "type": "SecurityEventsProvider",
+  "status": "ACTIVE",
+  "settings": {
+    "issuer": "https://your.openbox.instance/",
+    "jwksUrl": "https://your.openbox.instance/.well-known/jwks.json"
+  }
+}
+```
+
+Save the `id` as your `providerId`.
+
+### Lifecycle endpoints
+
+| Action | Request |
+|--------|---------|
+| List all providers | `GET /api/v1/security-events-providers` |
+| Retrieve | `GET /api/v1/security-events-providers/{providerId}` |
+| Update | `PUT /api/v1/security-events-providers/{providerId}` |
+| Deactivate | `POST /api/v1/security-events-providers/{providerId}/lifecycle/deactivate` |
+| Delete | `DELETE /api/v1/security-events-providers/{providerId}` |
+
+Full request/response schemas: [Configure an SSF receiver and publish a SET — Okta Developer](https://developer.okta.com/docs/guides/configure-ssf-receiver/main)
