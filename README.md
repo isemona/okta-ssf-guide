@@ -482,3 +482,73 @@ Risk signals alone don't take action — you need an **Entity Risk Policy** in O
 Once configured, a `user-risk-change` SET with `current_level: "high"` will automatically trigger the policy for that user.
 
 See [Identity Threat Protection — Okta Help](https://help.okta.com/oie/en-us/content/topics/itp/shared-signals.htm) for full policy configuration docs.
+
+---
+
+## Production Hardening
+
+### Private key management
+
+Never write the private key to disk unencrypted. Load it from your secrets manager at startup:
+
+```python
+import os
+PRIVATE_KEY_PEM = os.environ["OPENBOX_OKTA_SSF_PRIVATE_KEY"].encode()
+KID = os.environ["OPENBOX_OKTA_SSF_KID"]
+```
+
+### Key rotation
+
+1. Generate a new keypair
+2. Add the new public key to your JWKS response (keep the old key — Okta may have cached it)
+3. Update your provider registration: `PUT /api/v1/security-events-providers/{providerId}`
+4. Start signing new SETs with the new key and `kid`
+5. After a few minutes, remove the old key from your JWKS response
+
+### jti uniqueness
+
+Every SET must have a unique `jti`. Duplicates are silently dropped with no error. Always use `uuid.uuid4().hex` — never sequential IDs or timestamps alone.
+
+### Retry logic
+
+On non-202 responses, retry with exponential backoff. Generate a new `jti` per attempt — never reuse:
+
+```python
+import uuid, time, requests
+
+def send_with_retry(
+    build_token_fn,   # callable(jti: str) -> str
+    okta_org: str,
+    api_token: str,
+    max_attempts: int = 3
+) -> None:
+    for attempt in range(max_attempts):
+        token = build_token_fn(jti=uuid.uuid4().hex)
+        resp = requests.post(
+            f"{okta_org.rstrip('/')}/security/api/v1/security-events",
+            data=token,
+            headers={
+                "Authorization": f"SSWS {api_token}",
+                "Content-Type": "application/secevent+jwt",
+            }
+        )
+        if resp.status_code == 202:
+            return
+        if attempt < max_attempts - 1:
+            time.sleep(2 ** attempt)
+    resp.raise_for_status()
+```
+
+### Rate limiting
+
+Okta applies standard API rate limits to the security events endpoint. Monitor the `X-Rate-Limit-Remaining` response header and back off when it approaches zero. See [Okta API rate limits](https://developer.okta.com/docs/reference/rate-limits/) for current thresholds.
+
+---
+
+## References
+
+- [Configure an SSF receiver and publish a SET — Okta Developer](https://developer.okta.com/docs/guides/configure-ssf-receiver/main)
+- [SSF Transmitter SET payload structures — Okta Developer](https://developer.okta.com/docs/reference/ssf-transmitter-sets)
+- [Shared Signals — Okta Help Center](https://help.okta.com/oie/en-us/content/topics/itp/shared-signals.htm)
+- [Guide to Shared Signals](https://sharedsignals.guide)
+- [RFC 8417 — Security Event Token (SET)](https://datatracker.ietf.org/doc/html/rfc8417)
