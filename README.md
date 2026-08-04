@@ -60,3 +60,129 @@ Signals are [Security Event Tokens (SETs)](https://datatracker.ietf.org/doc/html
 - **Okta API token** with permission to manage security events providers. Generate one under Security > API > Tokens.
 - **Publicly accessible HTTPS host** for your JWKS endpoint (e.g., `https://your.openbox.instance/.well-known/jwks.json`). Okta fetches this during registration and to verify every incoming SET.
 - *(Optional but recommended)* **HTTPS host for `.well-known/ssf-configuration`** — enables SSF-compliant auto-discovery. Required for the SSF-compliant registration variant in Step 2.
+
+---
+
+## Quick Start
+
+Get a working transmitter in ~10 minutes.
+
+### 1. Generate a keypair and build your JWKS
+
+Install dependencies:
+
+```bash
+pip install cryptography PyJWT requests
+```
+
+Run this script to generate an RSA-2048 keypair and print your JWKS:
+
+```python
+# generate_keys.py
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+import base64, hashlib, json
+
+private_key = rsa.generate_private_key(
+    public_exponent=65537,
+    key_size=2048,
+    backend=default_backend()
+)
+
+with open("private_key.pem", "wb") as f:
+    f.write(private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    ))
+
+pub = private_key.public_key().public_numbers()
+
+def to_b64url(n: int) -> str:
+    return base64.urlsafe_b64encode(
+        n.to_bytes((n.bit_length() + 7) // 8, "big")
+    ).rstrip(b"=").decode()
+
+n_b64 = to_b64url(pub.n)
+kid = hashlib.sha256(n_b64.encode()).hexdigest()[:16]
+
+jwks = {"keys": [{"kty": "RSA", "use": "sig", "alg": "RS256",
+                  "kid": kid, "n": n_b64, "e": to_b64url(pub.e)}]}
+print(json.dumps(jwks, indent=2))
+# Copy the kid value — you'll need it when building SETs
+print(f"\nkid: {kid}")
+```
+
+Host the printed JWKS JSON at `https://your.openbox.instance/.well-known/jwks.json` with `Content-Type: application/json`.
+
+### 2. Register with Okta
+
+```bash
+curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
+  -H "Authorization: SSWS <your-api-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "OpenBox",
+    "type": "SecurityEventsProvider",
+    "settings": {
+      "wellKnownUrl": "https://your.openbox.instance/.well-known/ssf-configuration"
+    }
+  }'
+```
+
+Save the `id` field from the response — that's your `providerId`.
+
+### 3. Build and sign a SET
+
+```python
+# send_risk_change.py
+import jwt, uuid, time
+
+with open("private_key.pem", "rb") as f:
+    private_key_pem = f.read()
+
+KID = "<kid from generate_keys.py>"
+ISSUER = "https://your.openbox.instance/"   # must match registered issuer exactly
+OKTA_ORG = "https://your-org.okta.com/"    # trailing slash required
+
+now = int(time.time())
+payload = {
+    "iss": ISSUER,
+    "jti": uuid.uuid4().hex,   # must be unique per SET — duplicates are silently dropped
+    "iat": now,
+    "aud": OKTA_ORG,
+    "https://schemas.okta.com/secevent/okta/event-type/user-risk-change": {
+        "subject": {"user": {"format": "email", "email": "user@example.com"}},
+        "event_timestamp": now,
+        "previous_level": "low",
+        "current_level": "high",
+    }
+}
+
+token = jwt.encode(payload, private_key_pem, algorithm="RS256",
+                   headers={"kid": KID, "typ": "secevent+jwt"})
+```
+
+### 4. Send the SET
+
+```python
+import requests
+
+resp = requests.post(
+    f"{OKTA_ORG}security/api/v1/security-events",
+    data=token,
+    headers={
+        "Authorization": "SSWS <your-api-token>",
+        "Content-Type": "application/secevent+jwt",
+    }
+)
+print(resp.status_code)  # 202 = success
+```
+
+### 5. Verify in Okta System Log
+
+In the Okta Admin Console go to **Reports > System Log** and search for:
+
+- `security.events.provider.receive_event` — Okta received the SET
+- `user.risk.detect` — risk signal was processed by the risk engine
