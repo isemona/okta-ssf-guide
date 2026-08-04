@@ -1,6 +1,6 @@
-# OpenBox → Okta: Shared Signals Framework Integration
+# SSF Transmitter Integration with Okta
 
-> Build an SSF Transmitter that sends risk signals from OpenBox directly into Okta's risk engine. Okta is ready to receive — you just need to build the transmitter.
+> Build an SSF Transmitter that sends security signals directly into Okta's risk engine. Okta is ready to receive — you just need to build the transmitter.
 
 ## Table of Contents
 
@@ -19,14 +19,14 @@
 
 ## Overview
 
-When OpenBox detects risky AI agent behavior, it can push that signal directly into Okta's risk engine via the [Shared Signals Framework (SSF)](https://sharedsignals.guide). Okta evaluates the signal and triggers adaptive policies — session revocation, step-up auth, or Universal Logout — automatically.
+When your application detects a security event, it can push that signal directly into Okta's risk engine via the [Shared Signals Framework (SSF)](https://sharedsignals.guide). Okta evaluates the signal and triggers adaptive policies — session revocation, step-up auth, or Universal Logout — automatically.
 
-**OpenBox is the transmitter. Okta is the receiver. No changes are needed on Okta's end.**
+**Your application is the transmitter. Okta is the receiver. No changes are needed on Okta's end.**
 
 ```mermaid
 sequenceDiagram
-    participant OB as OpenBox (Transmitter)
-    participant JWKS as OpenBox JWKS Endpoint
+    participant OB as Your App (Transmitter)
+    participant JWKS as Your JWKS Endpoint
     participant Okta as Okta (Receiver)
     participant Log as Okta System Log
     participant Risk as Okta Risk Engine
@@ -50,7 +50,7 @@ sequenceDiagram
     Risk->>Okta: Trigger policy (session revocation / step-up auth)
 ```
 
-Signals are [Security Event Tokens (SETs)](https://datatracker.ietf.org/doc/html/rfc8417) — JWTs signed with your RSA private key and delivered over HTTPS. Okta supports three event types from OpenBox: [user risk change](#user-risk-change), [session revoked](#caep-session-revoked), and [credential change](#caep-credential-change).
+Signals are [Security Event Tokens (SETs)](https://datatracker.ietf.org/doc/html/rfc8417) — JWTs signed with your RSA private key and delivered over HTTPS. Okta supports three event types: [user risk change](#user-risk-change), [session revoked](#caep-session-revoked), and [credential change](#caep-credential-change).
 
 ---
 
@@ -58,7 +58,7 @@ Signals are [Security Event Tokens (SETs)](https://datatracker.ietf.org/doc/html
 
 - **Okta org with Identity Threat Protection (ITP) enabled** — SSF receiver functionality requires ITP. Confirm under Security > Identity Threat Protection in the Okta Admin Console.
 - **Okta API token** with permission to manage security events providers. Generate one under Security > API > Tokens.
-- **Publicly accessible HTTPS host** for your JWKS endpoint (e.g., `https://your.openbox.instance/.well-known/jwks.json`). Okta fetches this during registration and to verify every incoming SET. The endpoint must present a valid, publicly trusted TLS certificate — self-signed certificates are not accepted.
+- **Publicly accessible HTTPS host** for your JWKS endpoint (e.g., `https://your.domain.example/.well-known/jwks.json`). Okta fetches this during registration and to verify every incoming SET. The endpoint must present a valid, publicly trusted TLS certificate — self-signed certificates are not accepted.
 - *(Optional but recommended)* **HTTPS host for `.well-known/ssf-configuration`** — enables SSF-compliant auto-discovery. Required for the SSF-compliant registration variant in Step 2.
 
 ---
@@ -117,7 +117,7 @@ print(json.dumps(jwks, indent=2))
 print(f"\nkid: {kid}")
 ```
 
-Host the printed JWKS JSON at `https://your.openbox.instance/.well-known/jwks.json` with `Content-Type: application/json`.
+Host the printed JWKS JSON at `https://your.domain.example/.well-known/jwks.json` with `Content-Type: application/json`.
 
 ### 2. Register with Okta
 
@@ -126,10 +126,10 @@ curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
   -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "OpenBox",
+    "name": "<your-app-name>",
     "type": "SecurityEventsProvider",
     "settings": {
-      "wellKnownUrl": "https://your.openbox.instance/.well-known/ssf-configuration"
+      "wellKnownUrl": "https://your.domain.example/.well-known/ssf-configuration"
     }
   }'
 ```
@@ -142,12 +142,12 @@ Save the `id` field from the response — that's your `providerId`.
 # send_risk_change.py
 import jwt, uuid, time, os
 
-# local dev only — use os.environ["OPENBOX_OKTA_SSF_PRIVATE_KEY"] in production
+# local dev only — use os.environ["SSF_PRIVATE_KEY"] in production
 with open("private_key.pem", "rb") as f:
     private_key_pem = f.read()
 
 KID = "<kid from generate_keys.py>"
-ISSUER = "https://your.openbox.instance/"   # must match registered issuer exactly
+ISSUER = "https://your.domain.example/"   # must match registered issuer exactly
 OKTA_ORG = "https://your-org.okta.com/"    # trailing slash required
 
 now = int(time.time())
@@ -210,7 +210,7 @@ The [Quick Start script](#1-generate-a-keypair-and-build-your-jwks) generates a 
 
 ### JWKS endpoint
 
-Host the following JSON at a publicly accessible HTTPS URL (e.g. `https://your.openbox.instance/.well-known/jwks.json`) with `Content-Type: application/json`:
+Host the following JSON at a publicly accessible HTTPS URL (e.g. `https://your.domain.example/.well-known/jwks.json`) with `Content-Type: application/json`:
 
 ```json
 {
@@ -231,12 +231,12 @@ Okta fetches this URL during provider registration and on every incoming SET to 
 
 ### `.well-known/ssf-configuration` (optional)
 
-For SSF-compliant auto-discovery, host the following at `https://your.openbox.instance/.well-known/ssf-configuration`:
+For SSF-compliant auto-discovery, host the following at `https://your.domain.example/.well-known/ssf-configuration`:
 
 ```json
 {
-  "issuer": "https://your.openbox.instance/",
-  "jwks_uri": "https://your.openbox.instance/.well-known/jwks.json"
+  "issuer": "https://your.domain.example/",
+  "jwks_uri": "https://your.domain.example/.well-known/jwks.json"
 }
 ```
 
@@ -246,7 +246,7 @@ If you host this, provide only `wellKnownUrl` during registration. If you skip i
 
 ## Step 2: Register with Okta
 
-Register OpenBox as a security events provider so Okta knows your issuer and can verify SETs signed with your key.
+Register your application as a security events provider so Okta knows your issuer and can verify SETs signed with your key.
 
 ### SSF-compliant (recommended)
 
@@ -257,10 +257,10 @@ curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
   -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "OpenBox",
+    "name": "<your-app-name>",
     "type": "SecurityEventsProvider",
     "settings": {
-      "wellKnownUrl": "https://your.openbox.instance/.well-known/ssf-configuration"
+      "wellKnownUrl": "https://your.domain.example/.well-known/ssf-configuration"
     }
   }'
 ```
@@ -274,11 +274,11 @@ curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
   -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "OpenBox",
+    "name": "<your-app-name>",
     "type": "SecurityEventsProvider",
     "settings": {
-      "issuer": "https://your.openbox.instance/",
-      "jwksUrl": "https://your.openbox.instance/.well-known/jwks.json"
+      "issuer": "https://your.domain.example/",
+      "jwksUrl": "https://your.domain.example/.well-known/jwks.json"
     }
   }'
 ```
@@ -288,12 +288,12 @@ curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
 ```json
 {
   "id": "<your-provider-id>",
-  "name": "OpenBox",
+  "name": "<your-app-name>",
   "type": "SecurityEventsProvider",
   "status": "ACTIVE",
   "settings": {
-    "issuer": "https://your.openbox.instance/",
-    "jwksUrl": "https://your.openbox.instance/.well-known/jwks.json"
+    "issuer": "https://your.domain.example/",
+    "jwksUrl": "https://your.domain.example/.well-known/jwks.json"
   }
 }
 ```
@@ -330,11 +330,11 @@ All SETs share the same JWT header:
 
 ### user-risk-change
 
-OpenBox's primary signal. Send this when a user's risk level changes due to AI agent behavior.
+Your primary signal. Send this when a user's risk level changes.
 
 ```json
 {
-  "iss": "https://your.openbox.instance/",
+  "iss": "https://your.domain.example/",
   "jti": "24c63fb56e5a2d77a6b512616ca9fa24",
   "iat": 1750980770,
   "exp": 1750981070,
@@ -356,11 +356,11 @@ OpenBox's primary signal. Send this when a user's risk level changes due to AI a
 
 Send this when an active session should be terminated immediately.
 
-Use `format: "email"` if OpenBox identifies users by email (simplest). Use `format: "iss_sub"` if you have the Okta user ID (`sub`) available — replace `"iss"` with your Okta org URL and `"sub"` with the Okta user ID.
+Use `format: "email"` if your application identifies users by email (simplest). Use `format: "iss_sub"` if you have the Okta user ID (`sub`) available — replace `"iss"` with your Okta org URL and `"sub"` with the Okta user ID.
 
 ```json
 {
-  "iss": "https://your.openbox.instance/",
+  "iss": "https://your.domain.example/",
   "jti": "9d3a8f2b1c4e567890abcdef12345678",
   "iat": 1750980770,
   "exp": 1750981070,
@@ -370,7 +370,7 @@ Use `format: "email"` if OpenBox identifies users by email (simplest). Use `form
       "format": "email",
       "email": "user@example.com"
     },
-    "reason_admin": { "en": "Risky agent activity detected by OpenBox" },
+    "reason_admin": { "en": "Suspicious activity detected" },
     "event_timestamp": 1750980770
   }
 }
@@ -382,7 +382,7 @@ Send this when a credential has been created, updated, revoked, or deleted.
 
 ```json
 {
-  "iss": "https://your.openbox.instance/",
+  "iss": "https://your.domain.example/",
   "jti": "abc123def456789012345678abcdef01",
   "iat": 1750980770,
   "exp": 1750981070,
@@ -506,8 +506,8 @@ Never write the private key to disk unencrypted. Load it from your secrets manag
 ```python
 import os, re
 
-PRIVATE_KEY_PEM = os.environ["OPENBOX_OKTA_SSF_PRIVATE_KEY"].encode()
-KID = os.environ["OPENBOX_OKTA_SSF_KID"]
+PRIVATE_KEY_PEM = os.environ["SSF_PRIVATE_KEY"].encode()
+KID = os.environ["SSF_KID"]
 OKTA_API_TOKEN = os.environ["OKTA_API_TOKEN"]
 
 # Validate org URL at startup — prevents misconfiguration sending JWTs to the wrong host
