@@ -630,7 +630,7 @@
   | `phone-sms` | `update` | MFA factor update |
   | `DUO_SECURITY` | `update` | MFA factor update |
   | `password` | `revoke` | Password reset |
-  | `password` | `revoke` | Password update |
+  | `password` | `update` | Password update |
   ```
 
 - [ ] **Step 3: Verify**

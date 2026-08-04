@@ -58,7 +58,7 @@ Signals are [Security Event Tokens (SETs)](https://datatracker.ietf.org/doc/html
 
 - **Okta org with Identity Threat Protection (ITP) enabled** — SSF receiver functionality requires ITP. Confirm under Security > Identity Threat Protection in the Okta Admin Console.
 - **Okta API token** with permission to manage security events providers. Generate one under Security > API > Tokens.
-- **Publicly accessible HTTPS host** for your JWKS endpoint (e.g., `https://your.openbox.instance/.well-known/jwks.json`). Okta fetches this during registration and to verify every incoming SET.
+- **Publicly accessible HTTPS host** for your JWKS endpoint (e.g., `https://your.openbox.instance/.well-known/jwks.json`). Okta fetches this during registration and to verify every incoming SET. The endpoint must present a valid, publicly trusted TLS certificate — self-signed certificates are not accepted.
 - *(Optional but recommended)* **HTTPS host for `.well-known/ssf-configuration`** — enables SSF-compliant auto-discovery. Required for the SSF-compliant registration variant in Step 2.
 
 ---
@@ -90,6 +90,9 @@ private_key = rsa.generate_private_key(
     backend=default_backend()
 )
 
+# ⚠️ LOCAL DEVELOPMENT ONLY — do NOT commit private_key.pem or deploy it.
+# In production, generate keys inside your secrets manager. See Production Hardening.
+# Add private_key.pem to .gitignore before running this script.
 with open("private_key.pem", "wb") as f:
     f.write(private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -120,7 +123,7 @@ Host the printed JWKS JSON at `https://your.openbox.instance/.well-known/jwks.js
 
 ```bash
 curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
-  -H "Authorization: SSWS <your-api-token>" \
+  -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "OpenBox",
@@ -137,8 +140,9 @@ Save the `id` field from the response — that's your `providerId`.
 
 ```python
 # send_risk_change.py
-import jwt, uuid, time
+import jwt, uuid, time, os
 
+# local dev only — use os.environ["OPENBOX_OKTA_SSF_PRIVATE_KEY"] in production
 with open("private_key.pem", "rb") as f:
     private_key_pem = f.read()
 
@@ -151,6 +155,7 @@ payload = {
     "iss": ISSUER,
     "jti": uuid.uuid4().hex,   # must be unique per SET — duplicates are silently dropped
     "iat": now,
+    "exp": now + 300,          # SET expires in 5 minutes — defense against replay
     "aud": OKTA_ORG,
     "https://schemas.okta.com/secevent/okta/event-type/user-risk-change": {
         "subject": {"user": {"format": "email", "email": "user@example.com"}},
@@ -167,13 +172,13 @@ token = jwt.encode(payload, private_key_pem, algorithm="RS256",
 ### 4. Send the SET
 
 ```python
-import requests
+import requests, os
 
 resp = requests.post(
-    f"{OKTA_ORG}security/api/v1/security-events",
+    f"{OKTA_ORG.rstrip('/')}/security/api/v1/security-events",
     data=token,
     headers={
-        "Authorization": "SSWS <your-api-token>",
+        "Authorization": f"SSWS {os.environ['OKTA_API_TOKEN']}",
         "Content-Type": "application/secevent+jwt",
     }
 )
@@ -249,7 +254,7 @@ Use if you host `.well-known/ssf-configuration`:
 
 ```bash
 curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
-  -H "Authorization: SSWS <your-api-token>" \
+  -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "OpenBox",
@@ -266,7 +271,7 @@ Use if you're hosting JWKS directly without a well-known config:
 
 ```bash
 curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
-  -H "Authorization: SSWS <your-api-token>" \
+  -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "OpenBox",
@@ -282,7 +287,7 @@ curl -X POST https://your-org.okta.com/api/v1/security-events-providers \
 
 ```json
 {
-  "id": "sse0a4tsrkqfyFxBJ0g7",
+  "id": "<your-provider-id>",
   "name": "OpenBox",
   "type": "SecurityEventsProvider",
   "status": "ACTIVE",
@@ -332,6 +337,7 @@ OpenBox's primary signal. Send this when a user's risk level changes due to AI a
   "iss": "https://your.openbox.instance/",
   "jti": "24c63fb56e5a2d77a6b512616ca9fa24",
   "iat": 1750980770,
+  "exp": 1750981070,
   "aud": "https://your-org.okta.com/",
   "https://schemas.okta.com/secevent/okta/event-type/user-risk-change": {
     "subject": {
@@ -357,6 +363,7 @@ Use `format: "email"` if OpenBox identifies users by email (simplest). Use `form
   "iss": "https://your.openbox.instance/",
   "jti": "9d3a8f2b1c4e567890abcdef12345678",
   "iat": 1750980770,
+  "exp": 1750981070,
   "aud": "https://your-org.okta.com/",
   "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
     "subject": {
@@ -378,6 +385,7 @@ Send this when a credential has been created, updated, revoked, or deleted.
   "iss": "https://your.openbox.instance/",
   "jti": "abc123def456789012345678abcdef01",
   "iat": 1750980770,
+  "exp": 1750981070,
   "aud": "https://your-org.okta.com/",
   "https://schemas.openid.net/secevent/caep/event-type/credential-change": {
     "subject": {
@@ -416,7 +424,7 @@ POST /security/api/v1/security-events
 
 ```bash
 curl -X POST https://your-org.okta.com/security/api/v1/security-events \
-  -H "Authorization: SSWS <your-api-token>" \
+  -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
   -H "Content-Type: application/secevent+jwt" \
   --data-raw "<signed-jwt>"
 ```
@@ -496,9 +504,15 @@ See [Identity Threat Protection — Okta Help](https://help.okta.com/oie/en-us/c
 Never write the private key to disk unencrypted. Load it from your secrets manager at startup:
 
 ```python
-import os
+import os, re
+
 PRIVATE_KEY_PEM = os.environ["OPENBOX_OKTA_SSF_PRIVATE_KEY"].encode()
 KID = os.environ["OPENBOX_OKTA_SSF_KID"]
+OKTA_API_TOKEN = os.environ["OKTA_API_TOKEN"]
+
+# Validate org URL at startup — prevents misconfiguration sending JWTs to the wrong host
+OKTA_ORG = os.environ["OKTA_ORG_URL"]
+assert re.match(r"^https://[^/]+\.okta\.com/$", OKTA_ORG), f"Invalid OKTA_ORG_URL: {OKTA_ORG}"
 ```
 
 ### Key rotation
@@ -521,8 +535,8 @@ On non-202 responses, retry with exponential backoff. Generate a new `jti` per a
 import uuid, time, requests
 
 def send_with_retry(
-    build_token_fn,   # callable(jti: str) -> str
-    okta_org: str,
+    build_token_fn,   # callable(jti: str) -> str — called on EVERY attempt; never cache its output
+    okta_org: str,    # validate against r"^https://[^/]+\.okta\.com/$" at startup
     api_token: str,
     max_attempts: int = 3
 ) -> None:
