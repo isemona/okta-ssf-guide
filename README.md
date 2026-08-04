@@ -33,7 +33,7 @@ sequenceDiagram
 
     Note over OB: Setup (one-time)
     OB->>JWKS: Host RSA public key at /.well-known/jwks.json
-    OB->>Okta: POST /api/v1/security-events-providers<br/>(well-known URL or issuer + jwks_uri)
+    OB->>Okta: POST /api/v1/security-events-providers<br/>(well-known URL or issuer + jwksUrl)
     Okta-->>OB: 200 OK { providerId }
     Okta->>JWKS: Fetch public key for verification
 
@@ -321,6 +321,8 @@ All SETs share the same JWT header:
 }
 ```
 
+> **Subject format note:** Okta's `user-risk-change` event uses a named-member subject — the identifier is nested under a `"user"` key. CAEP events (`session-revoked`, `credential-change`) use a flat subject member with `format` and `email` at the top level. Do not mix the two patterns.
+
 ### user-risk-change
 
 OpenBox's primary signal. Send this when a user's risk level changes due to AI agent behavior.
@@ -400,7 +402,7 @@ Send this when a credential has been created, updated, revoked, or deleted.
 | `phone-sms` | `update` | MFA factor update |
 | `DUO_SECURITY` | `update` | MFA factor update |
 | `password` | `revoke` | Password reset |
-| `password` | `revoke` | Password update |
+| `password` | `update` | Password update |
 
 ---
 
@@ -452,7 +454,9 @@ def send_set(token: str, okta_org: str, api_token: str) -> None:
             "Content-Type": "application/secevent+jwt",
         }
     )
-    resp.raise_for_status()  # raises on 4xx/5xx; 202 does not raise
+    if resp.status_code != 202:
+        resp.raise_for_status()
+        raise ValueError(f"Unexpected status {resp.status_code} (expected 202)")
 ```
 
 ---
@@ -501,7 +505,7 @@ KID = os.environ["OPENBOX_OKTA_SSF_KID"]
 
 1. Generate a new keypair
 2. Add the new public key to your JWKS response (keep the old key — Okta may have cached it)
-3. Update your provider registration: `PUT /api/v1/security-events-providers/{providerId}`
+3. If the JWKS URI itself changed, update your provider registration: `PUT /api/v1/security-events-providers/{providerId}`. If you used `wellKnownUrl` and the URI hasn't changed, skip this step — Okta re-fetches the key at verification time.
 4. Start signing new SETs with the new key and `kid`
 5. After a few minutes, remove the old key from your JWKS response
 
