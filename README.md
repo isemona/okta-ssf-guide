@@ -401,3 +401,56 @@ Send this when a credential has been created, updated, revoked, or deleted.
 | `DUO_SECURITY` | `update` | MFA factor update |
 | `password` | `revoke` | Password reset |
 | `password` | `revoke` | Password update |
+
+---
+
+## Step 4: Sending SETs
+
+```bash
+POST /security/api/v1/security-events
+```
+
+**Request:**
+
+```bash
+curl -X POST https://your-org.okta.com/security/api/v1/security-events \
+  -H "Authorization: SSWS <your-api-token>" \
+  -H "Content-Type: application/secevent+jwt" \
+  --data-raw "<signed-jwt>"
+```
+
+**Response codes:**
+
+| Code | Meaning |
+|------|---------|
+| `202 Accepted` | SET received and queued for processing |
+| `400 Bad Request` | Malformed JWT or invalid claims |
+| `401 Unauthorized` | Invalid or missing API token |
+| `403 Forbidden` | Provider not registered or inactive |
+
+### Silent failures
+
+Okta returns `202` in these cases but silently drops the SET without processing it:
+
+| Condition | What to do |
+|-----------|------------|
+| Duplicate `jti` | Generate a fresh `uuid.uuid4().hex` per SET — never reuse |
+| Unknown user email | `email` must match an active user in the Okta org |
+| `iss` mismatch | `iss` in the JWT must exactly match the `issuer` in your registered provider object |
+
+### Python helper
+
+```python
+import requests
+
+def send_set(token: str, okta_org: str, api_token: str) -> None:
+    resp = requests.post(
+        f"{okta_org.rstrip('/')}/security/api/v1/security-events",
+        data=token,
+        headers={
+            "Authorization": f"SSWS {api_token}",
+            "Content-Type": "application/secevent+jwt",
+        }
+    )
+    resp.raise_for_status()  # raises on 4xx/5xx; 202 does not raise
+```
