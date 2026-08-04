@@ -454,3 +454,31 @@ def send_set(token: str, okta_org: str, api_token: str) -> None:
     )
     resp.raise_for_status()  # raises on 4xx/5xx; 202 does not raise
 ```
+
+---
+
+## Step 5: Verifying in Okta
+
+### System Log
+
+After sending a SET, verify receipt in the Okta Admin Console under **Reports > System Log**.
+
+| Event | What it means |
+|-------|---------------|
+| `security.events.provider.receive_event` | Okta received and accepted the SET |
+| `user.risk.detect` | Risk signal was processed by the risk engine |
+
+Search by event type or filter by the target user's email to narrow results.
+
+### Triggering a downstream policy
+
+Risk signals alone don't take action — you need an **Entity Risk Policy** in Okta to act on them.
+
+1. Go to **Security > Identity Threat Protection > Entity Risk Policy**
+2. Create or edit a policy rule
+3. Set the condition to trigger on risk level (e.g., when level reaches `high`)
+4. Choose an action: **Terminate all active sessions**, **Require re-authentication**, or **Universal Logout**
+
+Once configured, a `user-risk-change` SET with `current_level: "high"` will automatically trigger the policy for that user.
+
+See [Identity Threat Protection — Okta Help](https://help.okta.com/oie/en-us/content/topics/itp/shared-signals.htm) for full policy configuration docs.
