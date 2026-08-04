@@ -306,3 +306,98 @@ Save the `id` as your `providerId`.
 | Delete | `DELETE /api/v1/security-events-providers/{providerId}` |
 
 Full request/response schemas: [Configure an SSF receiver and publish a SET — Okta Developer](https://developer.okta.com/docs/guides/configure-ssf-receiver/main)
+
+---
+
+## Step 3: Event Reference
+
+All SETs share the same JWT header:
+
+```json
+{
+  "kid": "<your-key-id>",
+  "typ": "secevent+jwt",
+  "alg": "RS256"
+}
+```
+
+### user-risk-change
+
+OpenBox's primary signal. Send this when a user's risk level changes due to AI agent behavior.
+
+```json
+{
+  "iss": "https://your.openbox.instance/",
+  "jti": "24c63fb56e5a2d77a6b512616ca9fa24",
+  "iat": 1750980770,
+  "aud": "https://your-org.okta.com/",
+  "https://schemas.okta.com/secevent/okta/event-type/user-risk-change": {
+    "subject": {
+      "user": { "format": "email", "email": "user@example.com" }
+    },
+    "event_timestamp": 1750980770,
+    "previous_level": "low",
+    "current_level": "high"
+  }
+}
+```
+
+**Risk levels:** `low` | `medium` | `high`
+
+### CAEP Session Revoked
+
+Send this when an active session should be terminated immediately.
+
+Use `format: "email"` if OpenBox identifies users by email (simplest). Use `format: "iss_sub"` if you have the Okta user ID (`sub`) available — replace `"iss"` with your Okta org URL and `"sub"` with the Okta user ID.
+
+```json
+{
+  "iss": "https://your.openbox.instance/",
+  "jti": "9d3a8f2b1c4e567890abcdef12345678",
+  "iat": 1750980770,
+  "aud": "https://your-org.okta.com/",
+  "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+    "subject": {
+      "format": "email",
+      "email": "user@example.com"
+    },
+    "reason_admin": { "en": "Risky agent activity detected by OpenBox" },
+    "event_timestamp": 1750980770
+  }
+}
+```
+
+### CAEP Credential Change
+
+Send this when a credential has been created, updated, revoked, or deleted.
+
+```json
+{
+  "iss": "https://your.openbox.instance/",
+  "jti": "abc123def456789012345678abcdef01",
+  "iat": 1750980770,
+  "aud": "https://your-org.okta.com/",
+  "https://schemas.openid.net/secevent/caep/event-type/credential-change": {
+    "subject": {
+      "format": "email",
+      "email": "user@example.com"
+    },
+    "credential_type": "password",
+    "change_type": "revoke",
+    "event_timestamp": 1750980770
+  }
+}
+```
+
+**Supported `credential_type` + `change_type` combinations:**
+
+| `credential_type` | `change_type` | Triggered by |
+|---|---|---|
+| `fido2-roaming` | `create` | MFA factor activate |
+| `x509` | `delete` | MFA factor deactivate |
+| `ALL_FACTORS` | `revoke` | MFA factor reset all |
+| `OKTA_VERIFY_PUSH` | `update` | MFA factor suspend/unsuspend |
+| `phone-sms` | `update` | MFA factor update |
+| `DUO_SECURITY` | `update` | MFA factor update |
+| `password` | `revoke` | Password reset |
+| `password` | `revoke` | Password update |
