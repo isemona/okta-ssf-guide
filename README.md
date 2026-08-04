@@ -186,3 +186,53 @@ In the Okta Admin Console go to **Reports > System Log** and search for:
 
 - `security.events.provider.receive_event` — Okta received the SET
 - `user.risk.detect` — risk signal was processed by the risk engine
+
+---
+
+## Step 1: Keys & Endpoints
+
+### Keypair requirements
+
+| Parameter | Value |
+|-----------|-------|
+| Key type | RSA |
+| Key size | 2048 bits |
+| Algorithm | RS256 |
+| Key use | sig |
+| Key ID (`kid`) | SHA-256 of base64url-encoded modulus (first 16 hex chars) |
+
+The [Quick Start script](#1-generate-a-keypair-and-build-your-jwks) generates a compliant keypair. For production, generate keys in your secrets manager — never write the private key to disk unencrypted.
+
+### JWKS endpoint
+
+Host the following JSON at a publicly accessible HTTPS URL (e.g. `https://your.openbox.instance/.well-known/jwks.json`) with `Content-Type: application/json`:
+
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "<your-key-id>",
+      "n": "<base64url-encoded-modulus>",
+      "e": "AQAB"
+    }
+  ]
+}
+```
+
+Okta fetches this URL during provider registration and on every incoming SET to verify the JWT signature. It must be publicly reachable without authentication.
+
+### `.well-known/ssf-configuration` (optional)
+
+For SSF-compliant auto-discovery, host the following at `https://your.openbox.instance/.well-known/ssf-configuration`:
+
+```json
+{
+  "issuer": "https://your.openbox.instance/",
+  "jwks_uri": "https://your.openbox.instance/.well-known/jwks.json"
+}
+```
+
+If you host this, provide only `wellKnownUrl` during registration. If you skip it, provide `issuer` + `jwksUrl` directly (see [Step 2](#step-2-register-with-okta)).
